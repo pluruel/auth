@@ -3,6 +3,7 @@
 pub mod dto;
 pub mod handlers;
 pub mod middleware;
+pub mod openapi;
 
 use std::time::Duration;
 
@@ -14,6 +15,8 @@ use axum::{
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::state::AppState;
 
@@ -40,6 +43,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
         .nest(&prefix, auth)
+        .merge(
+            SwaggerUi::new("/docs")
+                .url("/api-docs/openapi.json", openapi::ApiDoc::openapi()),
+        )
         .with_state(state)
         .layer(cors)
         .layer(TimeoutLayer::with_status_code(

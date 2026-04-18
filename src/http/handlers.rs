@@ -22,10 +22,29 @@ use crate::{
     state::AppState,
 };
 
-pub async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({"status": "ok"}))
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is alive", body = HealthResp),
+    ),
+)]
+pub async fn health() -> Json<HealthResp> {
+    Json(HealthResp { status: "ok" })
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/register",
+    tag = "auth",
+    request_body = RegisterReq,
+    responses(
+        (status = 201, description = "User created", body = UserRead),
+        (status = 409, description = "Email already registered", body = ErrorResp),
+        (status = 422, description = "Validation error", body = ErrorResp),
+    ),
+)]
 pub async fn register(
     State(state): State<AppState>,
     Json(payload): Json<RegisterReq>,
@@ -70,6 +89,22 @@ pub async fn register(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "auth",
+    request_body(
+        content = LoginForm,
+        description = "OAuth2 password-grant form body",
+        content_type = "application/x-www-form-urlencoded",
+    ),
+    responses(
+        (status = 200, description = "Access + refresh token pair", body = TokenPair),
+        (status = 401, description = "Incorrect email or password", body = ErrorResp),
+        (status = 403, description = "Inactive user", body = ErrorResp),
+        (status = 422, description = "Validation error", body = ErrorResp),
+    ),
+)]
 pub async fn login(
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
@@ -96,6 +131,17 @@ pub async fn login(
     Ok(Json(pair))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/refresh",
+    tag = "auth",
+    request_body = RefreshReq,
+    responses(
+        (status = 200, description = "A fresh access token", body = AccessTokenResp),
+        (status = 401, description = "Invalid or expired refresh token", body = ErrorResp),
+        (status = 422, description = "Validation error", body = ErrorResp),
+    ),
+)]
 pub async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshReq>,
@@ -135,6 +181,18 @@ pub async fn refresh(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "auth",
+    request_body(
+        content = RefreshReq,
+        description = "Refresh token to revoke. Idempotent — unknown tokens also return 204.",
+    ),
+    responses(
+        (status = 204, description = "Logged out"),
+    ),
+)]
 pub async fn logout(
     State(state): State<AppState>,
     body: Option<Json<RefreshReq>>,
@@ -160,6 +218,16 @@ pub async fn logout(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current user", body = UserRead),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
 pub async fn me(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthUser>,
@@ -178,6 +246,14 @@ pub async fn me(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/.well-known/jwks.json",
+    tag = "auth",
+    responses(
+        (status = 200, description = "JWKS (RFC 7517) with Ed25519 public keys"),
+    ),
+)]
 pub async fn jwks(State(state): State<AppState>) -> impl IntoResponse {
     let body = state.security.jwks().to_string();
     let mut headers = HeaderMap::new();

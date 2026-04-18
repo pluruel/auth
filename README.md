@@ -13,6 +13,7 @@ Stack (modern idiomatic Rust):
 - **ed25519-dalek** + **pkcs8** — key loading / keygen binary
 - **tower-http** — CORS / timeout / tracing middleware
 - **tracing** + **tracing-subscriber** — structured (JSON) logging
+- **utoipa** + **utoipa-swagger-ui** (`vendored`) — OpenAPI 3.1 spec + Swagger UI
 
 Why SeaORM over sqlx-only: the user asked for an ORM after the Go port.
 SeaORM gives us Active-Record-ish ergonomics (familiar from Django/SQLAlchemy)
@@ -34,8 +35,10 @@ Identical to the Python and Go versions.
 | GET    | `/auth/me`                        | Bearer access token                |
 | GET    | `/auth/.well-known/jwks.json`     | public keys                        |
 | GET    | `/health`                         | liveness                           |
+| GET    | `/docs`                           | Swagger UI                         |
+| GET    | `/api-docs/openapi.json`          | OpenAPI 3.1 spec                   |
 
-Prefix is configurable via `API_PREFIX`.
+Prefix is configurable via `API_PREFIX` (applies to `/auth/*` only, not `/docs` or `/health`).
 
 ---
 
@@ -94,6 +97,9 @@ cargo run --bin keygen
 # 4. Smoke test
 curl http://localhost:8001/health
 curl http://localhost:8001/auth/.well-known/jwks.json
+
+# 5. Open Swagger UI
+open http://localhost:8001/docs          # or whatever opens URLs on your OS
 ```
 
 Migrations run automatically on startup (`Migrator::up(&db, None)`).
@@ -175,10 +181,11 @@ auth_rs/
     │   ├── user_group_user.rs
     │   └── refresh_token.rs
     ├── http/
-    │   ├── mod.rs             # router + CORS/timeout layers
-    │   ├── dto.rs             # request/response types
-    │   ├── handlers.rs        # register/login/refresh/logout/me/jwks
-    │   └── middleware.rs      # Bearer auth extractor
+    │   ├── mod.rs             # router + CORS/timeout layers + /docs mount
+    │   ├── dto.rs             # request/response types (+ ToSchema derives)
+    │   ├── handlers.rs        # register/login/refresh/logout/me/jwks (+ #[utoipa::path])
+    │   ├── middleware.rs      # Bearer auth extractor
+    │   └── openapi.rs         # ApiDoc + bearer_auth security scheme
     └── migrations/
         ├── mod.rs             # Migrator
         ├── m20260418_000001_init.rs
