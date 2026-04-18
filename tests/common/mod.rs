@@ -59,6 +59,7 @@ pub async fn setup() -> (Router, String) {
         default_user_groups: HashMap::new(),
         first_superuser_email: None,
         first_superuser_password: None,
+        admin_emails: vec![],
     };
 
     let state = AppState {

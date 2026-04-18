@@ -1,7 +1,7 @@
 // Author: Junnoh Lee <pluruel@gmail.com>
 // Copyright (c) 2026 Junnoh Lee. All rights reserved.
 use axum::{
-    extract::{Request, State},
+    extract::{Extension, Request, State},
     middleware::Next,
     response::Response,
 };
@@ -11,6 +11,7 @@ use crate::{
     entities::prelude::*,
     error::AppError,
     state::AppState,
+    ADMIN_GROUP,
 };
 use sea_orm::EntityTrait;
 
@@ -47,6 +48,17 @@ pub async fn require_bearer(
         groups: claims.groups,
     });
 
+    Ok(next.run(req).await)
+}
+
+pub async fn require_admin(
+    Extension(auth): Extension<AuthUser>,
+    req: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    if !auth.groups.iter().any(|g| g == ADMIN_GROUP) {
+        return Err(AppError::Forbidden("Admin privileges required"));
+    }
     Ok(next.run(req).await)
 }
 

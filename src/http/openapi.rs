@@ -19,6 +19,7 @@ use super::{dto, handlers};
     ),
     tags(
         (name = "auth", description = "Authentication endpoints"),
+        (name = "groups", description = "Group management"),
         (name = "health", description = "Operational"),
     ),
     paths(
@@ -29,6 +30,13 @@ use super::{dto, handlers};
         handlers::logout,
         handlers::me,
         handlers::jwks,
+        handlers::list_groups,
+        handlers::create_group,
+        handlers::get_group,
+        handlers::update_group,
+        handlers::delete_group,
+        handlers::add_group_member,
+        handlers::remove_group_member,
     ),
     components(schemas(
         dto::RegisterReq,
@@ -39,6 +47,12 @@ use super::{dto, handlers};
         dto::UserRead,
         dto::ErrorResp,
         dto::HealthResp,
+        dto::GroupCreateReq,
+        dto::GroupUpdateReq,
+        dto::GroupRead,
+        dto::GroupMember,
+        dto::GroupDetail,
+        dto::GroupMemberAddReq,
     )),
     modifiers(&SecurityAddon),
 )]

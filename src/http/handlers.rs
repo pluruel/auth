@@ -1,7 +1,7 @@
 // Author: Junnoh Lee <pluruel@gmail.com>
 // Copyright (c) 2026 Junnoh Lee. All rights reserved.
 use axum::{
-    extract::{Extension, State},
+    extract::{Extension, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
     Form, Json,
@@ -77,6 +77,18 @@ pub async fn register(
     .insert(&state.db)
     .await?;
 
+    let mut groups = vec![];
+    if state.config.admin_emails.iter().any(|e| e == &row.email) {
+        let admin = ensure_group(&state, crate::ADMIN_GROUP).await?;
+        user_group_user::ActiveModel {
+            user_id: Set(row.id),
+            user_group_id: Set(admin.id),
+        }
+        .insert(&state.db)
+        .await?;
+        groups.push(admin.name);
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(UserRead {
@@ -84,7 +96,7 @@ pub async fn register(
             email: row.email,
             full_name: row.full_name,
             is_active: row.is_active,
-            groups: vec![],
+            groups,
         }),
     ))
 }
@@ -268,6 +280,269 @@ pub async fn jwks(State(state): State<AppState>) -> impl IntoResponse {
     (headers, body)
 }
 
+#[utoipa::path(
+    get,
+    path = "/auth/groups",
+    tag = "groups",
+    responses(
+        (status = 200, description = "All groups", body = [GroupRead]),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn list_groups(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<GroupRead>>, AppError> {
+    let rows = UserGroup::find()
+        .order_by_asc(user_group::Column::Name)
+        .all(&state.db)
+        .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|m| GroupRead { id: m.id, name: m.name })
+            .collect(),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/groups",
+    tag = "groups",
+    request_body = GroupCreateReq,
+    responses(
+        (status = 201, description = "Group created", body = GroupRead),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+        (status = 409, description = "Group name already in use", body = ErrorResp),
+        (status = 422, description = "Validation error", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn create_group(
+    State(state): State<AppState>,
+    Json(payload): Json<GroupCreateReq>,
+) -> Result<(StatusCode, Json<GroupRead>), AppError> {
+    let name = payload.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::Unprocessable("name required"));
+    }
+
+    let existing = UserGroup::find()
+        .filter(user_group::Column::Name.eq(&name))
+        .one(&state.db)
+        .await?;
+    if existing.is_some() {
+        return Err(AppError::Conflict("Group name already in use"));
+    }
+
+    let row = user_group::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        name: Set(name),
+    }
+    .insert(&state.db)
+    .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(GroupRead { id: row.id, name: row.name }),
+    ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/groups/{group_id}",
+    tag = "groups",
+    params(("group_id" = Uuid, Path, description = "Group ID")),
+    responses(
+        (status = 200, description = "Group with members", body = GroupDetail),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+        (status = 404, description = "Group not found", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn get_group(
+    State(state): State<AppState>,
+    Path(group_id): Path<Uuid>,
+) -> Result<Json<GroupDetail>, AppError> {
+    let group = UserGroup::find_by_id(group_id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let member_ids: Vec<Uuid> = UserGroupUser::find()
+        .filter(user_group_user::Column::UserGroupId.eq(group_id))
+        .all(&state.db)
+        .await?
+        .into_iter()
+        .map(|m| m.user_id)
+        .collect();
+
+    let members = if member_ids.is_empty() {
+        vec![]
+    } else {
+        User::find()
+            .filter(user::Column::Id.is_in(member_ids))
+            .order_by_asc(user::Column::Email)
+            .all(&state.db)
+            .await?
+            .into_iter()
+            .map(|u| GroupMember {
+                id: u.id,
+                email: u.email,
+                full_name: u.full_name,
+            })
+            .collect()
+    };
+
+    Ok(Json(GroupDetail {
+        id: group.id,
+        name: group.name,
+        members,
+    }))
+}
+
+#[utoipa::path(
+    patch,
+    path = "/auth/groups/{group_id}",
+    tag = "groups",
+    request_body = GroupUpdateReq,
+    params(("group_id" = Uuid, Path, description = "Group ID")),
+    responses(
+        (status = 200, description = "Group updated", body = GroupRead),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+        (status = 404, description = "Group not found", body = ErrorResp),
+        (status = 409, description = "Group name already in use", body = ErrorResp),
+        (status = 422, description = "Validation error", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn update_group(
+    State(state): State<AppState>,
+    Path(group_id): Path<Uuid>,
+    Json(payload): Json<GroupUpdateReq>,
+) -> Result<Json<GroupRead>, AppError> {
+    let name = payload.name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::Unprocessable("name required"));
+    }
+
+    let group = UserGroup::find_by_id(group_id)
+        .one(&state.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    if group.name != name {
+        let conflict = UserGroup::find()
+            .filter(user_group::Column::Name.eq(&name))
+            .one(&state.db)
+            .await?;
+        if conflict.is_some() {
+            return Err(AppError::Conflict("Group name already in use"));
+        }
+    }
+
+    let mut active: user_group::ActiveModel = group.into();
+    active.name = Set(name);
+    let row = active.update(&state.db).await?;
+
+    Ok(Json(GroupRead { id: row.id, name: row.name }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/auth/groups/{group_id}",
+    tag = "groups",
+    params(("group_id" = Uuid, Path, description = "Group ID")),
+    responses(
+        (status = 204, description = "Group deleted"),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+        (status = 404, description = "Group not found", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn delete_group(
+    State(state): State<AppState>,
+    Path(group_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let res = UserGroup::delete_by_id(group_id).exec(&state.db).await?;
+    if res.rows_affected == 0 {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/groups/{group_id}/members",
+    tag = "groups",
+    request_body = GroupMemberAddReq,
+    params(("group_id" = Uuid, Path, description = "Group ID")),
+    responses(
+        (status = 204, description = "Member added (idempotent)"),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+        (status = 404, description = "Group or user not found", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn add_group_member(
+    State(state): State<AppState>,
+    Path(group_id): Path<Uuid>,
+    Json(payload): Json<GroupMemberAddReq>,
+) -> Result<StatusCode, AppError> {
+    if UserGroup::find_by_id(group_id).one(&state.db).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+    if User::find_by_id(payload.user_id).one(&state.db).await?.is_none() {
+        return Err(AppError::NotFound);
+    }
+
+    let existing = UserGroupUser::find_by_id((payload.user_id, group_id))
+        .one(&state.db)
+        .await?;
+    if existing.is_some() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    user_group_user::ActiveModel {
+        user_id: Set(payload.user_id),
+        user_group_id: Set(group_id),
+    }
+    .insert(&state.db)
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/auth/groups/{group_id}/members/{user_id}",
+    tag = "groups",
+    params(
+        ("group_id" = Uuid, Path, description = "Group ID"),
+        ("user_id" = Uuid, Path, description = "User ID"),
+    ),
+    responses(
+        (status = 204, description = "Member removed (idempotent)"),
+        (status = 401, description = "Missing or invalid access token", body = ErrorResp),
+        (status = 403, description = "Admin privileges required", body = ErrorResp),
+    ),
+    security(("bearer_auth" = [])),
+)]
+pub async fn remove_group_member(
+    State(state): State<AppState>,
+    Path((group_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, AppError> {
+    UserGroupUser::delete_by_id((user_id, group_id))
+        .exec(&state.db)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ---- internal helpers ----
 
 async fn issue_token_pair(state: &AppState, user: &user::Model) -> Result<TokenPair, AppError> {
@@ -299,6 +574,23 @@ async fn issue_token_pair(state: &AppState, user: &user::Model) -> Result<TokenP
         token_type: "bearer",
         expires_in: state.security.access_ttl.num_seconds(),
     })
+}
+
+async fn ensure_group(state: &AppState, name: &str) -> Result<user_group::Model, AppError> {
+    if let Some(g) = UserGroup::find()
+        .filter(user_group::Column::Name.eq(name))
+        .one(&state.db)
+        .await?
+    {
+        return Ok(g);
+    }
+    let row = user_group::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        name: Set(name.to_string()),
+    }
+    .insert(&state.db)
+    .await?;
+    Ok(row)
 }
 
 async fn load_groups(state: &AppState, user_id: Uuid) -> Result<Vec<String>, AppError> {

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use axum::{
     http::{header, HeaderValue, Method, StatusCode},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -31,8 +31,30 @@ pub fn router(state: AppState) -> Router {
         .route("/logout", post(handlers::logout))
         .route("/.well-known/jwks.json", get(handlers::jwks));
 
+    let admin = Router::new()
+        .route(
+            "/groups",
+            get(handlers::list_groups).post(handlers::create_group),
+        )
+        .route(
+            "/groups/:group_id",
+            get(handlers::get_group)
+                .patch(handlers::update_group)
+                .delete(handlers::delete_group),
+        )
+        .route(
+            "/groups/:group_id/members",
+            post(handlers::add_group_member),
+        )
+        .route(
+            "/groups/:group_id/members/:user_id",
+            delete(handlers::remove_group_member),
+        )
+        .route_layer(axum::middleware::from_fn(middleware::require_admin));
+
     let private = Router::new()
         .route("/me", get(handlers::me))
+        .merge(admin)
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::require_bearer,

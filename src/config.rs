@@ -27,6 +27,7 @@ pub struct Config {
     pub default_user_groups: HashMap<String, String>,
     pub first_superuser_email: Option<String>,
     pub first_superuser_password: Option<String>,
+    pub admin_emails: Vec<String>,
 }
 
 impl Config {
@@ -69,6 +70,7 @@ impl Config {
             default_user_groups: parse_groups(&env::var("DEFAULT_USER_GROUPS").unwrap_or_default())?,
             first_superuser_email: opt("FIRST_SUPERUSER_EMAIL"),
             first_superuser_password: opt("FIRST_SUPERUSER_PASSWORD"),
+            admin_emails: parse_emails(&env::var("ADMIN_EMAILS").unwrap_or_default()),
         })
     }
 }
@@ -109,6 +111,26 @@ fn parse_cors(raw: &str) -> Vec<String> {
     }
     raw.split(',')
         .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn parse_emails(raw: &str) -> Vec<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return vec![];
+    }
+    if raw.starts_with('[') {
+        if let Ok(v) = serde_json::from_str::<Vec<String>>(raw) {
+            return v
+                .into_iter()
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    raw.split(',')
+        .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect()
 }

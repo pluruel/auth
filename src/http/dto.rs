@@ -79,3 +79,42 @@ pub struct HealthResp {
     #[schema(example = "ok")]
     pub status: &'static str,
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"name":"admin"}))]
+pub struct GroupCreateReq {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"name":"admin"}))]
+pub struct GroupUpdateReq {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GroupRead {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GroupMember {
+    pub id: Uuid,
+    pub email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GroupDetail {
+    pub id: Uuid,
+    pub name: String,
+    pub members: Vec<GroupMember>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"user_id":"00000000-0000-0000-0000-000000000000"}))]
+pub struct GroupMemberAddReq {
+    pub user_id: Uuid,
+}
