@@ -133,27 +133,6 @@ All three implementations share:
 So you can point this binary at the same Postgres + same `keys/` that the
 Python or Go version used (minus the migration-tracking caveat — see below).
 
----
-
-## Migrating from Python/Go
-
-Each port has its own migration tracking table:
-- Python uses Alembic's `alembic_version`.
-- Go uses goose's `goose_db_version`.
-- Rust uses sea-orm-migration's `seaql_migrations`.
-
-If you swap runtimes against an already-populated DB, you need to tell the
-new runtime to treat the init migration as already-applied:
-
-```sql
-INSERT INTO seaql_migrations (version, applied_at)
-VALUES ('m20260418_000001_init', extract(epoch from now())::bigint);
-```
-
-Otherwise SeaORM will try to re-create tables and fail.
-
----
-
 ## Layout
 
 ```
