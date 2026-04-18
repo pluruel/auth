@@ -1,0 +1,7 @@
+/target
+/data
+/keys/*.pem
+.env
+*.log
+.idea/
+.vscode/

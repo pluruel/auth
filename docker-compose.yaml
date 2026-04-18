@@ -1,0 +1,56 @@
+# Author: Junnoh Lee <pluruel@gmail.com>
+# Copyright (c) 2026 Junnoh Lee. All rights reserved.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: auth_rs_db_postgres
+    volumes:
+      - ./data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  auth:
+    container_name: auth_rs
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./keys:/app/keys:ro
+    environment:
+      - POSTGRES_SERVER=auth_rs_db_postgres
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=5432
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - JWT_ISSUER=${JWT_ISSUER}
+      - JWT_AUDIENCE=${JWT_AUDIENCE}
+      - JWT_KEY_ID=${JWT_KEY_ID}
+      - DEFAULT_USER_GROUPS=${DEFAULT_USER_GROUPS}
+      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8001"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: auth_rs_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth
+    restart: unless-stopped

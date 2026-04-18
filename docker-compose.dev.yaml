@@ -1,0 +1,50 @@
+# Author: Junnoh Lee <pluruel@gmail.com>
+# Copyright (c) 2026 Junnoh Lee. All rights reserved.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: auth_rs_db_postgres
+    volumes:
+      - ./data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - target: 5432
+        published: 15432
+        host_ip: 0.0.0.0
+        protocol: tcp
+        mode: host
+
+  auth:
+    container_name: auth_rs
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./keys:/app/keys:ro
+    environment:
+      - POSTGRES_SERVER=auth_rs_db_postgres
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PORT=5432
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - JWT_ISSUER=${JWT_ISSUER}
+      - JWT_AUDIENCE=${JWT_AUDIENCE}
+      - JWT_KEY_ID=${JWT_KEY_ID}
+      - DEFAULT_USER_GROUPS=${DEFAULT_USER_GROUPS}
+      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD}
+      - RUST_LOG=auth_rs=debug,tower_http=debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
