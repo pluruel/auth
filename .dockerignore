@@ -1,7 +1,10 @@
 target/
 data/
 .git/
+.github/
 *.log
 .env
+.env.*
+keys/
 .vscode/
 .idea/

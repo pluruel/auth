@@ -19,9 +19,8 @@ services:
 
   auth:
     container_name: auth_rs
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/pluruel/auth:${AUTH_IMAGE_TAG:-latest}
+    pull_policy: always
     volumes:
       - ./keys:/app/keys:ro
     environment:
