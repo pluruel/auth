@@ -34,6 +34,21 @@ Prefix is configurable via `API_PREFIX` (applies to `/auth/*` only, not `/docs` 
 
 ---
 
+## Architecture
+
+### Network topology
+
+The auth service runs on **port 8001** inside this docker-compose stack. A **reverse proxy (Caddy, Nginx, etc.)** must be deployed in a **separate LXC container or VM** to:
+- Listen on external ports (80/443)
+- Route requests to `auth:8001`
+- Handle TLS termination
+
+This docker-compose stack only manages the **core services** (Postgres + auth). The edge reverse proxy is out-of-scope here—deploy and operate it separately.
+
+For **local development**, use `docker-compose.dev.yaml` which exposes port 8001 directly (no proxy layer needed).
+
+---
+
 ## Environment variables
 
 ### Required

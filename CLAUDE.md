@@ -62,6 +62,12 @@ CORS: when `BACKEND_CORS_ORIGINS` is non-empty, credentialed CORS is enabled wit
 
 Admin authorization is group-based: users registering with emails in `SUPERUSER_EMAILS` are automatically added to the `ADMIN` group (constant `auth_rs::ADMIN_GROUP`); `require_admin` checks group membership on the JWT subject.
 
+### Reverse proxy
+
+**This docker-compose.yaml does NOT include a reverse proxy.** Deploy one (Caddy, Nginx, etc.) in a separate LXC container or VM to route external traffic to `auth:8001`.
+
+**Dev stack (docker-compose.dev.yaml):** Uses `ports: "8001:8001"` to expose directly—no proxy needed.
+
 ## Conventions worth knowing
 
 - Two binaries share the crate: `auth_rs` (server, `src/main.rs`) and `keygen` (Ed25519 PEM generator, `src/bin/keygen.rs`). `lib.rs` re-exports modules so both binaries and `tests/` can import them via `use auth_rs::...`.
@@ -70,6 +76,8 @@ Admin authorization is group-based: users registering with emails in `SUPERUSER_
 - Refresh tokens are stored hashed (SHA-256 hex); only the hash is in `refresh_token` table, the raw token is returned once at login/refresh.
 
 ## Development workflow
+
+**All code changes MUST be made via sub-agents. Do not edit files directly.**
 
 Three-agent model for all server work:
 
@@ -82,3 +90,9 @@ Three-agent model for all server work:
 - All changes require corresponding test in `tests/`
 - `cargo test` must pass 100% before submission
 - Reviewers approve only if all tests pass
+
+---
+
+## Style note
+
+This document prioritizes brevity. Keep explanations concise—one sentence per idea, bullet lists over paragraphs. Readers should get context in one pass.

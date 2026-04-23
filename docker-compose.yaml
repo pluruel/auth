@@ -41,14 +41,3 @@ services:
     expose:
       - "8001"
     restart: unless-stopped
-
-  nginx:
-    image: nginx:alpine
-    container_name: auth_rs_nginx
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - auth
-    restart: unless-stopped
