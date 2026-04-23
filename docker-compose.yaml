@@ -34,9 +34,7 @@ services:
       - JWT_AUDIENCE=${JWT_AUDIENCE}
       - JWT_KEY_ID=${JWT_KEY_ID}
       - DEFAULT_USER_GROUPS=${DEFAULT_USER_GROUPS}
-      - FIRST_SUPERUSER_EMAIL=${FIRST_SUPERUSER_EMAIL}
-      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD}
-      - ADMIN_EMAILS=${ADMIN_EMAILS}
+      - SUPERUSER_EMAILS=${SUPERUSER_EMAILS}
     depends_on:
       postgres:
         condition: service_healthy

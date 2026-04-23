@@ -42,7 +42,7 @@ TEST_DATABASE_URL=postgres://user:pw@host:5432/db cargo test
 
 ## Architecture
 
-Startup flow (`main.rs`): `Config::from_env` → connect Postgres → `Migrator::up` (embedded SQL migrations run unconditionally on every boot) → `bootstrap` (seeds `DEFAULT_USER_GROUPS` and optional `FIRST_SUPERUSER_*`) → build `AppState` → mount `http::router` → `axum::serve` with graceful shutdown on SIGINT/SIGTERM.
+Startup flow (`main.rs`): `Config::from_env` → connect Postgres → `Migrator::up` (embedded SQL migrations run unconditionally on every boot) → `bootstrap` (seeds `DEFAULT_USER_GROUPS`) → build `AppState` → mount `http::router` → `axum::serve` with graceful shutdown on SIGINT/SIGTERM.
 
 Module map:
 
@@ -60,7 +60,7 @@ Module map:
 
 CORS: when `BACKEND_CORS_ORIGINS` is non-empty, credentialed CORS is enabled with explicit method/header lists (tower-http panics if `credentials=true` is combined with `Any`).
 
-Admin authorization is group-based: `ADMIN_EMAILS` and `FIRST_SUPERUSER_EMAIL` get added to the `ADMIN` group (constant `auth_rs::ADMIN_GROUP`); `require_admin` checks group membership on the JWT subject.
+Admin authorization is group-based: users registering with emails in `SUPERUSER_EMAILS` are automatically added to the `ADMIN` group (constant `auth_rs::ADMIN_GROUP`); `require_admin` checks group membership on the JWT subject.
 
 ## Conventions worth knowing
 
@@ -68,3 +68,17 @@ Admin authorization is group-based: `ADMIN_EMAILS` and `FIRST_SUPERUSER_EMAIL` g
 - Logging: `tracing` with the JSON formatter; level via `RUST_LOG` env (default `auth_rs=info,tower_http=info`).
 - Migrations are idempotent and always run on startup — there is no separate `migrate` subcommand.
 - Refresh tokens are stored hashed (SHA-256 hex); only the hash is in `refresh_token` table, the raw token is returned once at login/refresh.
+
+## Development workflow
+
+Three-agent model for all server work:
+
+**Agent roles:**
+- **Server Developer (Sonnet)**: Code implementation + tests
+- **Code Reviewer (Opus)**: Test validation + approval
+- **Documentation Updater (Sonnet)**: Updates CLAUDE.md, .env.example based on code changes
+
+**Requirements:**
+- All changes require corresponding test in `tests/`
+- `cargo test` must pass 100% before submission
+- Reviewers approve only if all tests pass

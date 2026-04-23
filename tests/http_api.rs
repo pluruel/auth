@@ -237,7 +237,8 @@ async fn logout_with_unknown_token_still_204() {
 
 #[tokio::test]
 async fn register_superuser_email_gets_admin_group() {
-    let superuser_email = "admin_test@example.com".to_string();
+    use uuid::Uuid;
+    let superuser_email = format!("admin_{}@example.com", Uuid::new_v4().simple());
     let (app, _) = common::setup_with_superuser_emails(vec![superuser_email.clone()]).await;
 
     let resp = send(
