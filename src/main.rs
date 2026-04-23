@@ -10,7 +10,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use auth_rs::{
     config::Config,
-    entities::{prelude::*, user_group, user_group_user, user},
+    entities::{prelude::*, user_group},
     error::AppError,
     http,
     migrations::Migrator,
@@ -77,7 +77,6 @@ async fn connect_db(url: &str) -> anyhow::Result<DatabaseConnection> {
 }
 
 async fn bootstrap(db: &DatabaseConnection, cfg: &Config) -> Result<(), AppError> {
-    // 1. seed user groups
     for name in cfg.default_user_groups.values() {
         let exists = UserGroup::find()
             .filter(user_group::Column::Name.eq(name))
@@ -91,65 +90,6 @@ async fn bootstrap(db: &DatabaseConnection, cfg: &Config) -> Result<(), AppError
             .insert(db)
             .await?;
         }
-    }
-
-    // 2. seed superuser (optional)
-    let (Some(email), Some(password)) =
-        (&cfg.first_superuser_email, &cfg.first_superuser_password)
-    else {
-        return Ok(());
-    };
-
-    let existing = User::find()
-        .filter(user::Column::Email.eq(email))
-        .one(db)
-        .await?;
-
-    let user_id = if let Some(u) = existing {
-        u.id
-    } else {
-        let hashed = Security::hash_password(password)?;
-        let now = chrono::Utc::now().naive_utc();
-        let u = user::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            email: Set(email.clone()),
-            hashed_password: Set(hashed),
-            full_name: Set(None),
-            is_active: Set(true),
-            created_at: Set(now),
-            updated_at: Set(now),
-        }
-        .insert(db)
-        .await?;
-        u.id
-    };
-
-    let admin_name = cfg
-        .default_user_groups
-        .get("ADMIN")
-        .cloned()
-        .unwrap_or_else(|| "ADMIN".to_string());
-
-    let admin = UserGroup::find()
-        .filter(user_group::Column::Name.eq(admin_name))
-        .one(db)
-        .await?;
-    let Some(admin) = admin else {
-        return Ok(());
-    };
-
-    let link_exists = UserGroupUser::find()
-        .filter(user_group_user::Column::UserId.eq(user_id))
-        .filter(user_group_user::Column::UserGroupId.eq(admin.id))
-        .one(db)
-        .await?;
-    if link_exists.is_none() {
-        user_group_user::ActiveModel {
-            user_id: Set(user_id),
-            user_group_id: Set(admin.id),
-        }
-        .insert(db)
-        .await?;
     }
     Ok(())
 }

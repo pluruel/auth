@@ -25,9 +25,7 @@ pub struct Config {
     pub database_url: String,
 
     pub default_user_groups: HashMap<String, String>,
-    pub first_superuser_email: Option<String>,
-    pub first_superuser_password: Option<String>,
-    pub admin_emails: Vec<String>,
+    pub superuser_emails: Vec<String>,
 }
 
 impl Config {
@@ -68,9 +66,7 @@ impl Config {
             database_url,
 
             default_user_groups: parse_groups(&env::var("DEFAULT_USER_GROUPS").unwrap_or_default())?,
-            first_superuser_email: opt("FIRST_SUPERUSER_EMAIL"),
-            first_superuser_password: opt("FIRST_SUPERUSER_PASSWORD"),
-            admin_emails: parse_emails(&env::var("ADMIN_EMAILS").unwrap_or_default()),
+            superuser_emails: parse_emails(&env::var("SUPERUSER_EMAILS").unwrap_or_default()),
         })
     }
 }
@@ -84,10 +80,6 @@ fn getenv(key: &str, default: &str) -> String {
         Ok(v) if !v.is_empty() => v,
         _ => default.to_string(),
     }
-}
-
-fn opt(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|v| !v.is_empty())
 }
 
 fn parse_env_int(key: &str, default: i64) -> Result<i64, AppError> {

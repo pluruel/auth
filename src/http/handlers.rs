@@ -78,7 +78,7 @@ pub async fn register(
     .await?;
 
     let mut groups = vec![];
-    if state.config.admin_emails.iter().any(|e| e == &row.email) {
+    if state.config.superuser_emails.iter().any(|e| e == &row.email) {
         let admin = ensure_group(&state, crate::ADMIN_GROUP).await?;
         user_group_user::ActiveModel {
             user_id: Set(row.id),

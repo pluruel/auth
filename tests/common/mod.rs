@@ -28,6 +28,11 @@ use uuid::Uuid;
 /// Build a fresh router + unique email so tests are independent even when
 /// they hit a shared dev Postgres. Returns a short handle to both.
 pub async fn setup() -> (Router, String) {
+    setup_with_superuser_emails(vec![]).await
+}
+
+/// Like setup(), but with specified superuser emails.
+pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Router, String) {
     let db = connect_test_db().await;
     Migrator::up(&db, None).await.expect("migrate");
 
@@ -57,9 +62,7 @@ pub async fn setup() -> (Router, String) {
         backend_cors_origins: vec![],
         database_url: String::new(),
         default_user_groups: HashMap::new(),
-        first_superuser_email: None,
-        first_superuser_password: None,
-        admin_emails: vec![],
+        superuser_emails,
     };
 
     let state = AppState {

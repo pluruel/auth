@@ -234,3 +234,25 @@ async fn logout_with_unknown_token_still_204() {
     .await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn register_superuser_email_gets_admin_group() {
+    let superuser_email = "admin_test@example.com".to_string();
+    let (app, _) = common::setup_with_superuser_emails(vec![superuser_email.clone()]).await;
+
+    let resp = send(
+        &app,
+        json_req(
+            "POST",
+            "/auth/register",
+            json!({"email": superuser_email, "password": "pw12345", "full_name": "Admin"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp).await;
+    assert_eq!(body["email"], superuser_email);
+    let groups = body["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0], "ADMIN");
+}
