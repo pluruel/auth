@@ -18,14 +18,6 @@ pub struct RegisterReq {
 pub struct LoginForm {
     pub username: String,
     pub password: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grant_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_secret: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]

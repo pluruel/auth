@@ -107,7 +107,7 @@ pub async fn register(
     tag = "auth",
     request_body(
         content = LoginForm,
-        description = "OAuth2 password-grant form body",
+        description = "Login form body",
         content_type = "application/x-www-form-urlencoded",
     ),
     responses(
