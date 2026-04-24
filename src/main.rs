@@ -36,7 +36,6 @@ async fn main() -> anyhow::Result<()> {
     let security = Security::new(
         &cfg.jwt_private_key_path,
         &cfg.jwt_public_key_path,
-        cfg.jwt_key_id.clone(),
         cfg.jwt_issuer.clone(),
         cfg.jwt_audience.clone(),
         cfg.access_token_expire_minutes,

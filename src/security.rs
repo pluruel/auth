@@ -21,7 +21,6 @@ pub struct Security {
     encoding: EncodingKey,
     decoding: DecodingKey,
     verifying: VerifyingKey,
-    pub key_id: String,
     pub issuer: String,
     pub audience: String,
     pub access_ttl: Duration,
@@ -46,7 +45,6 @@ impl Security {
     pub fn new(
         private_key_path: &str,
         public_key_path: &str,
-        key_id: String,
         issuer: String,
         audience: String,
         access_ttl_minutes: i64,
@@ -59,7 +57,6 @@ impl Security {
         Self::from_pems(
             &priv_pem,
             &pub_pem,
-            key_id,
             issuer,
             audience,
             access_ttl_minutes,
@@ -71,7 +68,6 @@ impl Security {
     pub fn from_pems(
         priv_pem: &str,
         pub_pem: &str,
-        key_id: String,
         issuer: String,
         audience: String,
         access_ttl_minutes: i64,
@@ -103,7 +99,6 @@ impl Security {
             encoding,
             decoding,
             verifying,
-            key_id,
             issuer,
             audience,
             access_ttl: Duration::minutes(access_ttl_minutes),
@@ -149,8 +144,7 @@ impl Security {
             typ: "access".to_string(),
         };
 
-        let mut header = Header::new(Algorithm::EdDSA);
-        header.kid = Some(self.key_id.clone());
+        let header = Header::new(Algorithm::EdDSA);
 
         encode(&header, &claims, &self.encoding)
             .map_err(|e| AppError::Internal(format!("sign jwt: {e}")))
@@ -179,8 +173,7 @@ impl Security {
             let x = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .encode(self.verifying.as_bytes());
             format!(
-                r#"{{"keys":[{{"kty":"OKP","crv":"Ed25519","use":"sig","alg":"EdDSA","kid":"{kid}","x":"{x}"}}]}}"#,
-                kid = self.key_id,
+                r#"{{"keys":[{{"kty":"OKP","crv":"Ed25519","use":"sig","alg":"EdDSA","x":"{x}"}}]}}"#,
                 x = x,
             )
         })
@@ -233,7 +226,6 @@ pub(crate) mod tests {
         Security::from_pems(
             &priv_pem,
             &pub_pem,
-            "test-key-1".to_string(),
             issuer.to_string(),
             audience.to_string(),
             15,
@@ -280,17 +272,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn jwt_roundtrip_and_kid_header() {
+    fn jwt_roundtrip() {
         let sec = make_security("auth-svc", "gpt-storage");
         let sub = "aae2b11e-0d9b-422c-99d9-5ed62a11ea44";
         let token = sec
             .create_access_token(sub, "u@e.com", vec!["admin".into()])
             .unwrap();
 
-        // Header has our kid.
+        // Header uses EdDSA algorithm.
         let header = jsonwebtoken::decode_header(&token).unwrap();
         assert_eq!(header.alg, Algorithm::EdDSA);
-        assert_eq!(header.kid.as_deref(), Some("test-key-1"));
+        assert_eq!(header.kid, None);
 
         // Claims roundtrip.
         let claims = sec.decode_access_token(&token).unwrap();
@@ -362,8 +354,7 @@ pub(crate) mod tests {
             exp: now + 600,
             typ: "refresh",
         };
-        let mut header = jsonwebtoken::Header::new(Algorithm::EdDSA);
-        header.kid = Some("test-key-1".into());
+        let header = jsonwebtoken::Header::new(Algorithm::EdDSA);
         let token = jsonwebtoken::encode(&header, &claims, &sec.encoding).unwrap();
 
         // The token is cryptographically valid, but typ != "access" must be rejected.
@@ -381,7 +372,7 @@ pub(crate) mod tests {
         assert_eq!(k["crv"], "Ed25519");
         assert_eq!(k["alg"], "EdDSA");
         assert_eq!(k["use"], "sig");
-        assert_eq!(k["kid"], "test-key-1");
+        assert!(k["kid"].is_null());
         let x = k["x"].as_str().unwrap();
         // Ed25519 public key is 32 bytes → 43 base64url-no-pad chars.
         assert_eq!(x.len(), 43);

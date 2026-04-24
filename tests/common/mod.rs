@@ -40,7 +40,6 @@ pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Rout
     let security = Security::from_pems(
         &priv_pem,
         &pub_pem,
-        "test-key-1".into(),
         "auth-svc".into(),
         "integration-test".into(),
         15,
@@ -56,7 +55,6 @@ pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Rout
         refresh_token_expire_days: 14,
         jwt_private_key_path: String::new(),
         jwt_public_key_path: String::new(),
-        jwt_key_id: "test-key-1".into(),
         jwt_issuer: "auth-svc".into(),
         jwt_audience: "integration-test".into(),
         backend_cors_origins: vec![],

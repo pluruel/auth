@@ -67,7 +67,6 @@ For **local development**, use `docker-compose.dev.yaml` which exposes port 8001
 |--------------------------------|-------------------------------|
 | `JWT_ISSUER`                   | `auth-svc`                    |
 | `JWT_AUDIENCE`                 | `auth-svc`                    |
-| `JWT_KEY_ID`                   | `auth-svc-key-1`              |
 | `JWT_PRIVATE_KEY_PATH`         | `/app/keys/jwt_private.pem`   |
 | `JWT_PUBLIC_KEY_PATH`          | `/app/keys/jwt_public.pem`    |
 | `ACCESS_TOKEN_EXPIRE_MINUTES`  | `15`                          |

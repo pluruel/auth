@@ -16,7 +16,6 @@ pub struct Config {
 
     pub jwt_private_key_path: String,
     pub jwt_public_key_path: String,
-    pub jwt_key_id: String,
     pub jwt_issuer: String,
     pub jwt_audience: String,
 
@@ -57,7 +56,6 @@ impl Config {
 
             jwt_private_key_path: getenv("JWT_PRIVATE_KEY_PATH", "/app/keys/jwt_private.pem"),
             jwt_public_key_path: getenv("JWT_PUBLIC_KEY_PATH", "/app/keys/jwt_public.pem"),
-            jwt_key_id: getenv("JWT_KEY_ID", "auth-svc-key-1"),
             jwt_issuer: getenv("JWT_ISSUER", "auth-svc"),
             jwt_audience: getenv("JWT_AUDIENCE", "auth-svc"),
 
