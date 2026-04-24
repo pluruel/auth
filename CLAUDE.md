@@ -84,12 +84,13 @@ Three-agent model for all server work:
 **Agent roles:**
 - **Server Developer (Sonnet)**: Code implementation + tests
 - **Code Reviewer (Opus)**: Test validation + approval
-- **Documentation Updater (Sonnet)**: Updates CLAUDE.md, .env.example based on code changes
+- **Documentation Updater (Sonnet)**: Updates CLAUDE.md, .env.example, and [MSA_INTEGRATION.md](MSA_INTEGRATION.md) based on code changes
 
 **Requirements:**
 - All changes require corresponding test in `tests/`
 - `cargo test` must pass 100% before submission
 - Reviewers approve only if all tests pass
+- After any code change, diff against [MSA_INTEGRATION.md](MSA_INTEGRATION.md) and update it if the change affects the downstream contract — HTTP routes/methods/paths, request/response shapes, status codes, JWT claims (`iss`/`aud`/`sub`/`email`/`groups`/`typ`/`exp`/`alg`), JWKS format, token transport (header/cookie rules), auth middleware semantics, `ADMIN_GROUP` literal, DB schema of `user`/`user_group`/`refresh_token`, or env vars exposed to consumers. If the change is migration-critical for downstream services (anything breaking or requiring action on their side), mark it clearly in the updated section.
 
 ---
 
