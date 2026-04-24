@@ -41,7 +41,7 @@ pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Rout
         &priv_pem,
         &pub_pem,
         "auth-svc".into(),
-        "integration-test".into(),
+        vec!["integration-test".to_string()],
         15,
         14,
     )
@@ -56,7 +56,7 @@ pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Rout
         jwt_private_key_path: String::new(),
         jwt_public_key_path: String::new(),
         jwt_issuer: "auth-svc".into(),
-        jwt_audience: "integration-test".into(),
+        jwt_audiences: vec!["integration-test".to_string()],
         backend_cors_origins: vec![],
         database_url: String::new(),
         default_user_groups: HashMap::new(),

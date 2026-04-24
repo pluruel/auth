@@ -17,7 +17,7 @@ pub struct Config {
     pub jwt_private_key_path: String,
     pub jwt_public_key_path: String,
     pub jwt_issuer: String,
-    pub jwt_audience: String,
+    pub jwt_audiences: Vec<String>,
 
     pub backend_cors_origins: Vec<String>,
 
@@ -57,7 +57,10 @@ impl Config {
             jwt_private_key_path: getenv("JWT_PRIVATE_KEY_PATH", "/app/keys/jwt_private.pem"),
             jwt_public_key_path: getenv("JWT_PUBLIC_KEY_PATH", "/app/keys/jwt_public.pem"),
             jwt_issuer: getenv("JWT_ISSUER", "auth-svc"),
-            jwt_audience: getenv("JWT_AUDIENCE", "auth-svc"),
+            jwt_audiences: {
+                let v = parse_audiences(&env::var("JWT_AUDIENCE").unwrap_or_default());
+                if v.is_empty() { vec!["auth-svc".to_string()] } else { v }
+            },
 
             backend_cors_origins: parse_cors(&env::var("BACKEND_CORS_ORIGINS").unwrap_or_default()),
 
@@ -97,6 +100,22 @@ fn parse_cors(raw: &str) -> Vec<String> {
     if raw.starts_with('[') {
         if let Ok(v) = serde_json::from_str::<Vec<String>>(raw) {
             return v;
+        }
+    }
+    raw.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn parse_audiences(raw: &str) -> Vec<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return vec![];
+    }
+    if raw.starts_with('[') {
+        if let Ok(v) = serde_json::from_str::<Vec<String>>(raw) {
+            return v.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         }
     }
     raw.split(',')

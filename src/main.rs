@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         project = cfg.project_name,
         addr = %cfg.addr,
         issuer = cfg.jwt_issuer,
-        audience = cfg.jwt_audience,
+        audiences = ?cfg.jwt_audiences,
         "starting auth_rs"
     );
 
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         &cfg.jwt_private_key_path,
         &cfg.jwt_public_key_path,
         cfg.jwt_issuer.clone(),
-        cfg.jwt_audience.clone(),
+        cfg.jwt_audiences.clone(),
         cfg.access_token_expire_minutes,
         cfg.refresh_token_expire_days,
     )?;

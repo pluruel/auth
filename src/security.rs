@@ -22,7 +22,7 @@ pub struct Security {
     decoding: DecodingKey,
     verifying: VerifyingKey,
     pub issuer: String,
-    pub audience: String,
+    pub audiences: Vec<String>,
     pub access_ttl: Duration,
     pub refresh_ttl: Duration,
     jwks: OnceLock<String>,
@@ -31,7 +31,7 @@ pub struct Security {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccessClaims {
     pub iss: String,
-    pub aud: String,
+    pub aud: Vec<String>,
     pub sub: String,
     pub email: String,
     pub groups: Vec<String>,
@@ -46,7 +46,7 @@ impl Security {
         private_key_path: &str,
         public_key_path: &str,
         issuer: String,
-        audience: String,
+        audiences: Vec<String>,
         access_ttl_minutes: i64,
         refresh_ttl_days: i64,
     ) -> Result<Self, AppError> {
@@ -58,7 +58,7 @@ impl Security {
             &priv_pem,
             &pub_pem,
             issuer,
-            audience,
+            audiences,
             access_ttl_minutes,
             refresh_ttl_days,
         )
@@ -69,7 +69,7 @@ impl Security {
         priv_pem: &str,
         pub_pem: &str,
         issuer: String,
-        audience: String,
+        audiences: Vec<String>,
         access_ttl_minutes: i64,
         refresh_ttl_days: i64,
     ) -> Result<Self, AppError> {
@@ -100,7 +100,7 @@ impl Security {
             decoding,
             verifying,
             issuer,
-            audience,
+            audiences,
             access_ttl: Duration::minutes(access_ttl_minutes),
             refresh_ttl: Duration::days(refresh_ttl_days),
             jwks: OnceLock::new(),
@@ -134,7 +134,7 @@ impl Security {
 
         let claims = AccessClaims {
             iss: self.issuer.clone(),
-            aud: self.audience.clone(),
+            aud: self.audiences.clone(),
             sub: subject.to_string(),
             email: email.to_string(),
             groups,
@@ -153,7 +153,7 @@ impl Security {
     pub fn decode_access_token(&self, token: &str) -> Result<AccessClaims, AppError> {
         let mut validation = Validation::new(Algorithm::EdDSA);
         validation.set_issuer(&[self.issuer.clone()]);
-        validation.set_audience(&[self.audience.clone()]);
+        validation.set_audience(&self.audiences);
         validation.set_required_spec_claims(&["iss", "aud", "sub", "exp"]);
 
         let data = decode::<AccessClaims>(token, &self.decoding, &validation)
@@ -221,13 +221,13 @@ pub(crate) mod tests {
         (priv_pem, pub_pem)
     }
 
-    pub fn make_security(issuer: &str, audience: &str) -> Security {
+    pub fn make_security(issuer: &str, audiences: &[&str]) -> Security {
         let (priv_pem, pub_pem) = test_keypair();
         Security::from_pems(
             &priv_pem,
             &pub_pem,
             issuer.to_string(),
-            audience.to_string(),
+            audiences.iter().map(|s| s.to_string()).collect(),
             15,
             14,
         )
@@ -273,7 +273,7 @@ pub(crate) mod tests {
 
     #[test]
     fn jwt_roundtrip() {
-        let sec = make_security("auth-svc", "gpt-storage");
+        let sec = make_security("auth-svc", &["gpt-storage"]);
         let sub = "aae2b11e-0d9b-422c-99d9-5ed62a11ea44";
         let token = sec
             .create_access_token(sub, "u@e.com", vec!["admin".into()])
@@ -290,14 +290,14 @@ pub(crate) mod tests {
         assert_eq!(claims.email, "u@e.com");
         assert_eq!(claims.groups, vec!["admin".to_string()]);
         assert_eq!(claims.iss, "auth-svc");
-        assert_eq!(claims.aud, "gpt-storage");
+        assert_eq!(claims.aud, vec!["gpt-storage".to_string()]);
         assert_eq!(claims.typ, "access");
     }
 
     #[test]
     fn jwt_decode_rejects_wrong_audience() {
         let issuer = "auth-svc";
-        let signer = make_security(issuer, "aud-A");
+        let signer = make_security(issuer, &["aud-A"]);
         let token = signer.create_access_token("x", "u@e.com", vec![]).unwrap();
 
         // A verifier expecting a different audience must reject.
@@ -318,7 +318,7 @@ pub(crate) mod tests {
         // Build a NEW Security from the SAME keypair by creating fresh PEMs tied to the same seed
         // is awkward — instead construct `verifier` as a fresh keypair with aud-B, sign with it,
         // and verify that audience mismatch across different Security instances is rejected.
-        let other = make_security(issuer, "aud-B");
+        let other = make_security(issuer, &["aud-B"]);
         assert!(
             other.decode_access_token(&token).is_err(),
             "token signed by a different keypair/audience must not verify"
@@ -326,14 +326,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn jwt_multi_audience_accepted_by_any_expected_aud() {
+        let issuer = "auth-svc";
+        let (priv_pem, pub_pem) = test_keypair();
+
+        let make_sec = |auds: &[&str]| {
+            Security::from_pems(
+                &priv_pem,
+                &pub_pem,
+                issuer.to_string(),
+                auds.iter().map(|s| s.to_string()).collect(),
+                15,
+                14,
+            )
+            .expect("from_pems")
+        };
+
+        let signer = make_sec(&["svc-a", "svc-b"]);
+        let token = signer.create_access_token("u", "u@e.com", vec![]).unwrap();
+
+        assert!(make_sec(&["svc-a"]).decode_access_token(&token).is_ok());
+        assert!(make_sec(&["svc-b"]).decode_access_token(&token).is_ok());
+        assert!(make_sec(&["svc-c"]).decode_access_token(&token).is_err());
+    }
+
+    #[test]
     fn jwt_decode_rejects_non_access_typ() {
-        let sec = make_security("iss", "aud");
+        let sec = make_security("iss", &["aud"]);
 
         // Hand-craft a valid-signature token with typ != "access".
         #[derive(serde::Serialize)]
         struct Custom<'a> {
             iss: &'a str,
-            aud: &'a str,
+            aud: Vec<&'a str>,
             sub: &'a str,
             email: &'a str,
             groups: Vec<String>,
@@ -345,7 +370,7 @@ pub(crate) mod tests {
         let now = Utc::now().timestamp();
         let claims = Custom {
             iss: "iss",
-            aud: "aud",
+            aud: vec!["aud"],
             sub: "u",
             email: "e",
             groups: vec![],
@@ -363,7 +388,7 @@ pub(crate) mod tests {
 
     #[test]
     fn jwks_is_valid_rfc7517() {
-        let sec = make_security("iss", "aud");
+        let sec = make_security("iss", &["aud"]);
         let jwks: serde_json::Value = serde_json::from_str(sec.jwks()).unwrap();
         let keys = jwks["keys"].as_array().unwrap();
         assert_eq!(keys.len(), 1);
