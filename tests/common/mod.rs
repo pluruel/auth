@@ -17,6 +17,7 @@ use axum::http::{Request, Response};
 use axum::Router;
 use ed25519_dalek::SigningKey;
 use http_body_util::BodyExt;
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
@@ -33,6 +34,18 @@ pub async fn setup() -> (Router, String) {
 
 /// Like setup(), but with specified superuser emails.
 pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Router, String) {
+    let (app, email, _priv_pem) = setup_inner(superuser_emails).await;
+    (app, email)
+}
+
+/// Like setup(), but also returns the server's private PEM so tests can forge
+/// custom-signed JWTs that will pass signature verification.
+pub async fn setup_with_keys() -> (Router, String, String) {
+    setup_inner(vec![]).await
+}
+
+/// Internal builder used by all public setup variants.
+async fn setup_inner(superuser_emails: Vec<String>) -> (Router, String, String) {
     let db = connect_test_db().await;
     Migrator::up(&db, None).await.expect("migrate");
 
@@ -70,7 +83,18 @@ pub async fn setup_with_superuser_emails(superuser_emails: Vec<String>) -> (Rout
     };
     let app = http::router(state);
     let email = format!("t_{}@example.com", Uuid::new_v4().simple());
-    (app, email)
+    (app, email, priv_pem)
+}
+
+/// Sign a custom JWT with the given Ed25519 private PEM and arbitrary claims.
+/// Uses Algorithm::EdDSA and no `kid`. This produces a token the server will
+/// accept *signature-wise* (if the PEM is the server's own key) so tests can
+/// isolate individual claim-level rejections.
+#[allow(dead_code)]
+pub fn sign_eddsa(priv_pem: &str, claims: &Value) -> String {
+    let key = EncodingKey::from_ed_pem(priv_pem.as_bytes()).expect("encoding key from pem");
+    let header = Header::new(Algorithm::EdDSA);
+    encode(&header, claims, &key).expect("sign eddsa")
 }
 
 async fn connect_test_db() -> DatabaseConnection {
