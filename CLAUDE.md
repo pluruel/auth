@@ -73,7 +73,7 @@ Admin authorization is group-based: users registering with emails in `SUPERUSER_
 - Two binaries share the crate: `auth_rs` (server, `src/main.rs`) and `keygen` (Ed25519 PEM generator, `src/bin/keygen.rs`). `lib.rs` re-exports modules so both binaries and `tests/` can import them via `use auth_rs::...`.
 - Logging: `tracing` with the JSON formatter; level via `RUST_LOG` env (default `auth_rs=info,tower_http=info`).
 - Migrations are idempotent and always run on startup — there is no separate `migrate` subcommand.
-- Refresh tokens are stored hashed (SHA-256 hex); only the hash is in `refresh_token` table, the raw token is returned once at login/refresh.
+- Refresh tokens are stored hashed (SHA-256 hex); only the hash is in `refresh_token` table, the raw token is returned once at login/refresh. `POST /auth/refresh` rotates the token: the presented token is revoked and a fresh `TokenPair` (access + refresh) is returned. Presenting an already-revoked token triggers reuse detection — all active tokens for that user are revoked and `401` is returned.
 
 ## Development workflow
 

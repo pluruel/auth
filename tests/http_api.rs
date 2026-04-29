@@ -95,7 +95,7 @@ async fn full_auth_flow() {
     let body = read_json(resp).await;
     assert_eq!(body["email"], email);
 
-    // 4. refresh
+    // 4. refresh — rotation: get back a new token pair
     let resp = send(
         &app,
         json_req("POST", "/auth/refresh", json!({"refresh_token": refresh})),
@@ -105,19 +105,22 @@ async fn full_auth_flow() {
     let body = read_json(resp).await;
     let new_access = body["access_token"].as_str().unwrap();
     assert!(!new_access.is_empty());
+    let new_refresh = body["refresh_token"].as_str().unwrap().to_string();
+    assert!(!new_refresh.is_empty());
+    assert_ne!(new_refresh, refresh, "rotated refresh token must differ from original");
 
-    // 5. logout
+    // 5. logout using the NEW refresh token (original was already revoked by rotation)
     let resp = send(
         &app,
-        json_req("POST", "/auth/logout", json!({"refresh_token": refresh})),
+        json_req("POST", "/auth/logout", json!({"refresh_token": new_refresh})),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    // 6. refresh must now fail
+    // 6. refresh with the new (now-revoked-by-logout) token must fail
     let resp = send(
         &app,
-        json_req("POST", "/auth/refresh", json!({"refresh_token": refresh})),
+        json_req("POST", "/auth/refresh", json!({"refresh_token": new_refresh})),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -994,4 +997,112 @@ async fn refresh_with_empty_token_rejected() {
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = read_json(resp).await;
     assert_eq!(body["detail"], "refresh_token required");
+}
+
+/// Each call to /auth/refresh rotates the token: the old token is revoked and
+/// a brand-new refresh token is returned. Re-presenting the original token must
+/// be rejected.
+#[tokio::test]
+async fn refresh_rotates_and_old_token_rejected() {
+    let (app, email) = setup().await;
+
+    // register + login
+    send(
+        &app,
+        json_req(
+            "POST",
+            "/auth/register",
+            json!({"email": email, "password": "pw_rotate_test"}),
+        ),
+    )
+    .await;
+    let login_resp = send(
+        &app,
+        form_req(
+            "POST",
+            "/auth/login",
+            &[("username", &email), ("password", "pw_rotate_test")],
+        ),
+    )
+    .await;
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body = read_json(login_resp).await;
+    let r1 = login_body["refresh_token"].as_str().unwrap().to_string();
+
+    // first refresh — captures r2
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": r1})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp).await;
+    let r2 = body["refresh_token"].as_str().unwrap().to_string();
+    assert!(!r2.is_empty());
+    assert_ne!(r2, r1, "rotated token must differ from original");
+
+    // re-present r1 — must be rejected (token was already rotated/revoked)
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": r1})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Reuse detection: presenting an already-revoked refresh token causes all of
+/// that user's active refresh tokens to be revoked as a theft signal.
+#[tokio::test]
+async fn refresh_reuse_revokes_all_sibling_tokens() {
+    let (app, email) = setup().await;
+
+    // register + login
+    send(
+        &app,
+        json_req(
+            "POST",
+            "/auth/register",
+            json!({"email": email, "password": "pw_reuse_test"}),
+        ),
+    )
+    .await;
+    let login_resp = send(
+        &app,
+        form_req(
+            "POST",
+            "/auth/login",
+            &[("username", &email), ("password", "pw_reuse_test")],
+        ),
+    )
+    .await;
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body = read_json(login_resp).await;
+    let r1 = login_body["refresh_token"].as_str().unwrap().to_string();
+
+    // normal rotation: r1 -> r2
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": r1})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp).await;
+    let r2 = body["refresh_token"].as_str().unwrap().to_string();
+    assert_ne!(r2, r1);
+
+    // replay r1 (already revoked) — triggers reuse detection, revokes all tokens
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": r1})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // r2 must also be revoked now (reuse detection wiped all siblings)
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": r2})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

@@ -9,7 +9,7 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect,
+    QuerySelect, sea_query::Expr,
 };
 use uuid::Uuid;
 
@@ -149,7 +149,7 @@ pub async fn login(
     tag = "auth",
     request_body = RefreshReq,
     responses(
-        (status = 200, description = "A fresh access token", body = AccessTokenResp),
+        (status = 200, description = "A fresh access + refresh token pair", body = TokenPair),
         (status = 401, description = "Invalid or expired refresh token", body = ErrorResp),
         (status = 422, description = "Validation error", body = ErrorResp),
     ),
@@ -157,7 +157,7 @@ pub async fn login(
 pub async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshReq>,
-) -> Result<Json<AccessTokenResp>, AppError> {
+) -> Result<Json<TokenPair>, AppError> {
     if req.refresh_token.is_empty() {
         return Err(AppError::Unprocessable("refresh_token required"));
     }
@@ -169,7 +169,18 @@ pub async fn refresh(
         .await?
         .ok_or(AppError::Unauthorized("Invalid or expired refresh token"))?;
 
-    if rt.revoked || rt.expires_at < Utc::now().naive_utc() {
+    // Reuse detection: if already revoked, revoke all sibling tokens and return 401.
+    if rt.revoked {
+        RefreshToken::update_many()
+            .col_expr(refresh_token::Column::Revoked, Expr::value(true))
+            .filter(refresh_token::Column::UserId.eq(rt.user_id))
+            .filter(refresh_token::Column::Revoked.eq(false))
+            .exec(&state.db)
+            .await?;
+        return Err(AppError::Unauthorized("Invalid or expired refresh token"));
+    }
+
+    if rt.expires_at < Utc::now().naive_utc() {
         return Err(AppError::Unauthorized("Invalid or expired refresh token"));
     }
 
@@ -181,16 +192,14 @@ pub async fn refresh(
         return Err(AppError::Unauthorized("User not available"));
     }
 
-    let groups = load_groups(&state, user.id).await?;
-    let access = state
-        .security
-        .create_access_token(&user.id.to_string(), &user.email, groups)?;
+    // Revoke the presented token.
+    let mut active: refresh_token::ActiveModel = rt.into();
+    active.revoked = Set(true);
+    active.update(&state.db).await?;
 
-    Ok(Json(AccessTokenResp {
-        access_token: access,
-        token_type: "bearer",
-        expires_in: state.security.access_ttl.num_seconds(),
-    }))
+    // Issue a fresh access + refresh token pair.
+    let pair = issue_token_pair(&state, &user).await?;
+    Ok(Json(pair))
 }
 
 #[utoipa::path(
