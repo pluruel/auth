@@ -1050,6 +1050,259 @@ async fn refresh_rotates_and_old_token_rejected() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+// -----------------------------------------------------------------------
+// Phase 1: refresh-token cookie tests
+// -----------------------------------------------------------------------
+
+/// Helper: register + login, return (app, access_token, refresh_token).
+async fn register_and_login(app: &axum::Router, email: &str, password: &str) -> (String, String) {
+    send(
+        app,
+        json_req(
+            "POST",
+            "/auth/register",
+            json!({"email": email, "password": password}),
+        ),
+    )
+    .await;
+    let login_resp = send(
+        app,
+        form_req("POST", "/auth/login", &[("username", email), ("password", password)]),
+    )
+    .await;
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let body = read_json(login_resp).await;
+    let access = body["access_token"].as_str().unwrap().to_string();
+    let refresh = body["refresh_token"].as_str().unwrap().to_string();
+    (access, refresh)
+}
+
+#[tokio::test]
+async fn login_sets_refresh_cookie() {
+    let (app, email) = setup().await;
+    send(
+        &app,
+        json_req("POST", "/auth/register", json!({"email": email, "password": "pw_cookie"})),
+    )
+    .await;
+
+    let resp = send(
+        &app,
+        form_req("POST", "/auth/login", &[("username", &email), ("password", "pw_cookie")]),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let cookie_hdr = common::get_set_cookie(resp.headers(), "refresh_token")
+        .expect("Set-Cookie: refresh_token must be present");
+    assert!(
+        cookie_hdr.contains("HttpOnly"),
+        "cookie must be HttpOnly: {cookie_hdr}"
+    );
+    assert!(
+        cookie_hdr.contains("Secure"),
+        "cookie must be Secure: {cookie_hdr}"
+    );
+    assert!(
+        cookie_hdr.contains("SameSite=None"),
+        "cookie must be SameSite=None: {cookie_hdr}"
+    );
+    assert!(
+        cookie_hdr.contains("Path=/auth"),
+        "cookie must have Path=/auth: {cookie_hdr}"
+    );
+    assert!(
+        cookie_hdr.contains("Max-Age=1209600"),
+        "cookie must have Max-Age=1209600: {cookie_hdr}"
+    );
+
+    // The cookie value must equal the JSON body refresh_token.
+    let body = read_json(resp).await;
+    let json_refresh = body["refresh_token"].as_str().unwrap();
+    let cookie_value = cookie_hdr
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("refresh_token=");
+    assert_eq!(cookie_value, json_refresh, "cookie value must match JSON refresh_token");
+}
+
+#[tokio::test]
+async fn refresh_with_cookie_only() {
+    let (app, email) = setup().await;
+    let (_access, original_refresh) = register_and_login(&app, &email, "pw_cookie_only").await;
+
+    let resp = send(&app, cookie_refresh_req("/auth/refresh", &original_refresh)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Capture Set-Cookie header before consuming body.
+    let cookie_hdr = common::get_set_cookie(resp.headers(), "refresh_token")
+        .expect("refresh must set cookie");
+    let cookie_value = cookie_hdr
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("refresh_token=")
+        .to_string();
+
+    let body = read_json(resp).await;
+    let new_json_refresh = body["refresh_token"].as_str().unwrap();
+    assert_eq!(cookie_value, new_json_refresh, "Set-Cookie value must match JSON refresh_token");
+    assert_ne!(cookie_value, original_refresh, "rotated cookie must differ from original");
+}
+
+#[tokio::test]
+async fn refresh_with_body_only() {
+    let (app, email) = setup().await;
+    let (_access, original_refresh) = register_and_login(&app, &email, "pw_body_only").await;
+
+    let resp = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": original_refresh})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp).await;
+    let new_refresh = body["refresh_token"].as_str().unwrap();
+    assert!(!new_refresh.is_empty());
+    assert_ne!(new_refresh, original_refresh, "rotated token must differ");
+}
+
+#[tokio::test]
+async fn refresh_cookie_wins_when_both_present() {
+    let (app, email) = setup().await;
+    // Get two independent refresh tokens: login twice.
+    let (_a1, cookie_token) = register_and_login(&app, &email, "pw_both_present").await;
+    // Second login gives another token (body_token).
+    let login_resp2 = send(
+        &app,
+        form_req("POST", "/auth/login", &[("username", &email), ("password", "pw_both_present")]),
+    )
+    .await;
+    let body2 = read_json(login_resp2).await;
+    let body_token = body2["refresh_token"].as_str().unwrap().to_string();
+
+    assert_ne!(cookie_token, body_token);
+
+    // Send request with cookie=cookie_token AND body=body_token.
+    // The cookie should win, so cookie_token gets consumed and the NEW token is returned.
+    let req = Request::builder()
+        .method("POST")
+        .uri("/auth/refresh")
+        .header("cookie", format!("refresh_token={cookie_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"refresh_token": body_token}).to_string()))
+        .unwrap();
+    let resp = send(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Capture the rotated token returned by the server (this is what cookie_token became).
+    let resp_cookie = common::get_set_cookie(resp.headers(), "refresh_token")
+        .expect("must set cookie after refresh");
+    let rotated_from_cookie = resp_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("refresh_token=")
+        .to_string();
+
+    // The rotated token must differ from both original tokens.
+    assert_ne!(rotated_from_cookie, cookie_token, "rotated must differ from cookie_token");
+    assert_ne!(rotated_from_cookie, body_token, "rotated must differ from body_token");
+
+    // body_token was NOT consumed by the refresh above; verify it still works.
+    let resp3 = send(
+        &app,
+        json_req("POST", "/auth/refresh", json!({"refresh_token": body_token})),
+    )
+    .await;
+    assert_eq!(resp3.status(), StatusCode::OK, "body token should still be usable");
+}
+
+#[tokio::test]
+async fn logout_clears_refresh_cookie() {
+    let (app, email) = setup().await;
+    let (_access, refresh) = register_and_login(&app, &email, "pw_logout_cookie").await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/auth/logout")
+        .header("cookie", format!("refresh_token={refresh}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = send(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let clear_cookie = common::get_set_cookie(resp.headers(), "refresh_token")
+        .expect("logout must emit Set-Cookie to clear refresh_token");
+    assert!(
+        clear_cookie.contains("Max-Age=0"),
+        "clear cookie must have Max-Age=0: {clear_cookie}"
+    );
+}
+
+#[tokio::test]
+async fn logout_with_no_body_or_cookie_still_clears_cookie() {
+    let (app, _) = setup().await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/auth/logout")
+        .body(Body::empty())
+        .unwrap();
+    let resp = send(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let clear_cookie = common::get_set_cookie(resp.headers(), "refresh_token")
+        .expect("logout with no token must still emit Set-Cookie to clear refresh_token");
+    assert!(
+        clear_cookie.contains("Max-Age=0"),
+        "clear cookie must have Max-Age=0: {clear_cookie}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_reuse_detection_via_cookie() {
+    let (app, email) = setup().await;
+    let (_access, r1) = register_and_login(&app, &email, "pw_reuse_cookie").await;
+
+    // First refresh via cookie: r1 -> r2.
+    let resp1 = send(&app, cookie_refresh_req("/auth/refresh", &r1)).await;
+    assert_eq!(resp1.status(), StatusCode::OK);
+    let set_cookie = common::get_set_cookie(resp1.headers(), "refresh_token").unwrap();
+    let r2 = set_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("refresh_token=")
+        .to_string();
+    // consume body
+    let _ = read_json(resp1).await;
+
+    // Re-present r1 (already revoked) — should trigger reuse detection (401).
+    let resp2 = send(&app, cookie_refresh_req("/auth/refresh", &r1)).await;
+    assert_eq!(resp2.status(), StatusCode::UNAUTHORIZED, "replaying r1 must be rejected");
+
+    // After reuse detection, r2 must also be revoked.
+    let resp3 = send(&app, cookie_refresh_req("/auth/refresh", &r2)).await;
+    assert_eq!(resp3.status(), StatusCode::UNAUTHORIZED, "r2 must be revoked by reuse detection");
+}
+
+#[tokio::test]
+async fn refresh_with_no_cookie_and_no_body_returns_422() {
+    let (app, _) = setup().await;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/auth/refresh")
+        .body(Body::empty())
+        .unwrap();
+    let resp = send(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = read_json(resp).await;
+    assert_eq!(body["detail"], "refresh_token required");
+}
+
 /// Reuse detection: presenting an already-revoked refresh token causes all of
 /// that user's active refresh tokens to be revoked as a theft signal.
 #[tokio::test]

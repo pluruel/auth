@@ -150,6 +150,31 @@ pub fn bearer_req(method: &str, path: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// POST request with a `Cookie: refresh_token=<value>` header and no JSON body.
+pub fn cookie_refresh_req(path: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("cookie", format!("refresh_token={token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// Extract a named Set-Cookie value from the response headers.
+/// Returns the full attribute string after `name=`, or None if not found.
+pub fn get_set_cookie<'a>(
+    headers: &'a axum::http::HeaderMap,
+    name: &str,
+) -> Option<String> {
+    for val in headers.get_all(axum::http::header::SET_COOKIE) {
+        let s = val.to_str().ok()?;
+        if s.starts_with(&format!("{name}=")) {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
 // --------- response helpers ----------------------------------------------
 
 pub async fn send(app: &Router, req: Request<Body>) -> Response<Body> {
