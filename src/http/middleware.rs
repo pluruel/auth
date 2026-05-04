@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Junnoh Lee. All rights reserved.
 use axum::{
     extract::{Extension, Request, State},
+    http::HeaderMap,
     middleware::Next,
     response::Response,
 };
@@ -69,7 +70,7 @@ fn extract_bearer(req: &Request) -> Option<String> {
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .or_else(|| cookie_value(req, "Authorization"));
+        .or_else(|| cookie_value(req.headers(), "Authorization"));
 
     let raw = raw?;
     let mut parts = raw.splitn(2, ' ');
@@ -84,9 +85,8 @@ fn extract_bearer(req: &Request) -> Option<String> {
     Some(token.to_string())
 }
 
-fn cookie_value(req: &Request, name: &str) -> Option<String> {
-    let header = req
-        .headers()
+pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    let header = headers
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())?;
     for pair in header.split(';') {

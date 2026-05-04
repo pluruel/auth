@@ -17,10 +17,20 @@ use crate::{
     entities::{prelude::*, refresh_token, user, user_group, user_group_user},
     error::AppError,
     http::dto::*,
-    http::middleware::AuthUser,
+    http::middleware::{cookie_value, AuthUser},
     security::Security,
     state::AppState,
 };
+
+const REFRESH_COOKIE_ATTRS: &str = "HttpOnly; Secure; SameSite=None; Path=/auth";
+
+fn refresh_cookie_set(value: &str, max_age_secs: i64) -> String {
+    format!("refresh_token={value}; {REFRESH_COOKIE_ATTRS}; Max-Age={max_age_secs}")
+}
+
+fn refresh_cookie_clear() -> String {
+    format!("refresh_token=; {REFRESH_COOKIE_ATTRS}; Max-Age=0")
+}
 
 #[utoipa::path(
     get,
@@ -120,7 +130,7 @@ pub async fn register(
 pub async fn login(
     State(state): State<AppState>,
     Form(form): Form<LoginForm>,
-) -> Result<Json<TokenPair>, AppError> {
+) -> Result<impl IntoResponse, AppError> {
     let email = form.username.trim().to_lowercase();
     if email.is_empty() || form.password.is_empty() {
         return Err(AppError::Unprocessable("username and password required"));
@@ -140,7 +150,13 @@ pub async fn login(
     }
 
     let pair = issue_token_pair(&state, &user).await?;
-    Ok(Json(pair))
+    let cookie = refresh_cookie_set(&pair.refresh_token, state.security.refresh_ttl.num_seconds());
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        header::HeaderValue::from_str(&cookie).expect("valid cookie header"),
+    );
+    Ok((headers, Json(pair)))
 }
 
 #[utoipa::path(
@@ -156,13 +172,20 @@ pub async fn login(
 )]
 pub async fn refresh(
     State(state): State<AppState>,
-    Json(req): Json<RefreshReq>,
-) -> Result<Json<TokenPair>, AppError> {
-    if req.refresh_token.is_empty() {
-        return Err(AppError::Unprocessable("refresh_token required"));
-    }
+    headers: HeaderMap,
+    body: Option<Json<RefreshReq>>,
+) -> Result<impl IntoResponse, AppError> {
+    // Cookie wins if present; fall back to JSON body.
+    let token = cookie_value(&headers, "refresh_token")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            body.as_ref()
+                .map(|Json(r)| r.refresh_token.clone())
+                .filter(|v| !v.is_empty())
+        })
+        .ok_or(AppError::Unprocessable("refresh_token required"))?;
 
-    let token_hash = crate::security::hash_refresh_token(&req.refresh_token);
+    let token_hash = crate::security::hash_refresh_token(&token);
     let rt = RefreshToken::find()
         .filter(refresh_token::Column::TokenHash.eq(token_hash))
         .one(&state.db)
@@ -199,7 +222,13 @@ pub async fn refresh(
 
     // Issue a fresh access + refresh token pair.
     let pair = issue_token_pair(&state, &user).await?;
-    Ok(Json(pair))
+    let cookie = refresh_cookie_set(&pair.refresh_token, state.security.refresh_ttl.num_seconds());
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(
+        header::SET_COOKIE,
+        header::HeaderValue::from_str(&cookie).expect("valid cookie header"),
+    );
+    Ok((resp_headers, Json(pair)))
 }
 
 #[utoipa::path(
@@ -216,27 +245,38 @@ pub async fn refresh(
 )]
 pub async fn logout(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Option<Json<RefreshReq>>,
-) -> Result<StatusCode, AppError> {
-    let Some(Json(req)) = body else {
-        return Ok(StatusCode::NO_CONTENT);
-    };
-    if req.refresh_token.is_empty() {
-        return Ok(StatusCode::NO_CONTENT);
-    }
-    let token_hash = crate::security::hash_refresh_token(&req.refresh_token);
+) -> Result<impl IntoResponse, AppError> {
+    // Cookie wins if present; fall back to JSON body.
+    let token = cookie_value(&headers, "refresh_token")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            body.as_ref()
+                .map(|Json(r)| r.refresh_token.clone())
+                .filter(|v| !v.is_empty())
+        });
 
-    if let Some(rt) = RefreshToken::find()
-        .filter(refresh_token::Column::TokenHash.eq(token_hash))
-        .one(&state.db)
-        .await?
-    {
-        let mut active: refresh_token::ActiveModel = rt.into();
-        active.revoked = Set(true);
-        active.update(&state.db).await?;
+    if let Some(t) = token {
+        let token_hash = crate::security::hash_refresh_token(&t);
+        if let Some(rt) = RefreshToken::find()
+            .filter(refresh_token::Column::TokenHash.eq(token_hash))
+            .one(&state.db)
+            .await?
+        {
+            let mut active: refresh_token::ActiveModel = rt.into();
+            active.revoked = Set(true);
+            active.update(&state.db).await?;
+        }
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    let clear = refresh_cookie_clear();
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(
+        header::SET_COOKIE,
+        header::HeaderValue::from_str(&clear).expect("valid cookie header"),
+    );
+    Ok((resp_headers, StatusCode::NO_CONTENT))
 }
 
 #[utoipa::path(
