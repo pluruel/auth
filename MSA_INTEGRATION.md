@@ -45,7 +45,9 @@ Contract for integrating `auth-svc` as the central authentication service in an 
   - `Authorization: Bearer <access_token>` header (preferred).
   - `Cookie: Authorization=Bearer <access_token>` (note: the **`Bearer `** scheme is required inside the cookie too).
 - `/auth/login` uses **`application/x-www-form-urlencoded`**. Sending JSON returns `422`. Field names are `username` (which carries the email) and `password`.
-- Do NOT store refresh tokens in `localStorage`. Persist them only in an httpOnly + Secure + SameSite cookie or in a server-side session.
+- Do NOT store refresh tokens in `localStorage` — leaks via XSS.
+- `auth-svc` sets the `refresh_token` cookie automatically on `/auth/login` (and rotates/clears it on `/auth/refresh` / `/auth/logout`). Treat the cookie as the **preferred** transport for the refresh token. Cookie attributes: `HttpOnly` (XSS-safe), `Secure` (HTTPS only), `SameSite=None` (cross-site calls required, e.g. `gpt.junodevs.com` → `auth.junodevs.com`), `Path=/auth` (scoped to auth endpoints), no `Domain` (host-only), `Max-Age` derived from `REFRESH_TOKEN_EXPIRE_DAYS` (default 14 days = 1 209 600 s).
+- Browsers MUST include credentials on cross-site requests: `fetch` → `credentials: 'include'`; `axios` → `withCredentials: true`.
 
 ### Refresh-token rotation (BREAKING — action required for downstream consumers)
 
@@ -56,6 +58,18 @@ Contract for integrating `auth-svc` as the central authentication service in an 
 - **Reuse detection**: presenting an already-revoked refresh token is treated as a theft signal — all of that user's active refresh tokens are revoked and `401` is returned. The client must re-authenticate via `/auth/login`.
 - Error wording is unchanged for all failure cases: `{"detail": "Invalid or expired refresh token"}` with `401`.
 - **Required action**: update every consumer that calls `/auth/refresh` to capture and persist the new `refresh_token` from the response on every call.
+- `/auth/refresh` also rotates the `refresh_token` cookie (new `Set-Cookie` on each call); `/auth/logout` always clears it (`Max-Age=0`).
+- **Deprecated**: the `refresh_token` JSON field on `/auth/login` and `/auth/refresh` responses is kept for one release cycle for backward compatibility — it will be removed in a future release. Migrate to the cookie transport.
+- **Deprecated**: supplying `refresh_token` in the JSON body of `/auth/refresh` and `/auth/logout` is accepted for one release cycle — it will be removed in a future release. Migrate to the cookie transport.
+
+#### Refresh-token cookie (recommended transport)
+
+- `auth-svc` sets `refresh_token` cookie on `/auth/login`, rotates it on `/auth/refresh`, and clears it on `/auth/logout`.
+- Cookie attributes: `HttpOnly; Secure; SameSite=None; Path=/auth; Max-Age=<REFRESH_TOKEN_EXPIRE_DAYS × 86400>`. No `Domain` (host-only).
+- Cookie wins over JSON body when both are present on `/auth/refresh` and `/auth/logout`.
+- JSON `refresh_token` field on responses is **deprecated** — present for one release cycle, then removed.
+- JSON-body `refresh_token` input on `/auth/refresh` and `/auth/logout` is **deprecated** — accepted for one release cycle, then removed.
+- Browsers must send credentials on cross-site requests: `fetch` → `credentials: 'include'`; `axios` → `withCredentials: true`.
 
 ---
 
@@ -78,9 +92,9 @@ All `/auth/*` paths are mounted under `API_PREFIX` (default `/auth`). `/health`,
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/auth/register` | JSON `{email, password, full_name?}` | `201 UserRead` |
-| POST | `/auth/login` | **form-urlencoded** `username=&password=` | `200 TokenPair` |
-| POST | `/auth/refresh` | JSON `{refresh_token}` | `200 TokenPair` — full rotation: new access **and** refresh token issued, old refresh token revoked |
-| POST | `/auth/logout` | JSON `{refresh_token}` (optional) | `204`, idempotent |
+| POST | `/auth/login` | **form-urlencoded** `username=&password=` | `200 TokenPair` + `Set-Cookie: refresh_token=…` |
+| POST | `/auth/refresh` | cookie `refresh_token` OR JSON `{refresh_token}` (cookie wins; neither → `422`) | `200 TokenPair` + rotated `Set-Cookie: refresh_token=…`; full rotation: new access **and** refresh token, old refresh token revoked |
+| POST | `/auth/logout` | cookie `refresh_token` OR JSON `{refresh_token}` (both optional; cookie wins) | `204`, idempotent; always emits `Set-Cookie: refresh_token=; Max-Age=0` |
 | GET  | `/auth/.well-known/jwks.json` | — | JWKS (Ed25519) |
 | GET  | `/health` | — | `{"status":"ok"}` |
 
@@ -187,7 +201,8 @@ JWT libraries by language: Python `PyJWT[crypto]` / `authlib`, Go `github.com/le
 - Expecting exact `aud` equality → fails. Check array containment.
 - Requiring `kid` → fails. No `kid` is emitted.
 - Renaming the ADMIN group → the middleware checks the literal, so the code must be updated too.
-- Persisting refresh tokens in `localStorage` → leaks via XSS.
+- Persisting refresh tokens in `localStorage` → leaks via XSS. Use the cookie transport instead.
+- Stripping the `refresh_token` cookie (e.g. not sending credentials on `/auth/refresh`) → falls back to JSON body, which is deprecated and will be removed.
 - Reusing the old refresh token after a `/auth/refresh` call → `401` + all sessions for that user are revoked (reuse-detection). Always capture and replace the `refresh_token` from every rotation response.
 
 ---
