@@ -131,9 +131,9 @@ RUST_LOG=auth_rs=debug cargo run
 auth_rs/
 ├── Cargo.toml
 ├── Dockerfile                 # multi-stage, distroless cc-nonroot
-├── docker-compose.yaml        # prod: postgres + auth + nginx
+├── docker-compose.yaml        # prod: postgres + auth (no proxy — see Network topology)
 ├── docker-compose.dev.yaml    # dev: postgres + auth (expose 8001/5433)
-├── nginx.conf
+├── nginx.conf                 # reference config; not consumed by this stack (see below)
 ├── .env.example
 ├── run.sh / stop.sh
 ├── keys/                      # jwt_{private,public}.pem (gitignored)
@@ -167,12 +167,23 @@ auth_rs/
 
 ## Backup & Migration
 
+> **Reverse proxy is not covered.** This stack is only `postgres` + `auth` — no nginx service actually runs here (see [Network topology](#network-topology)). `nginx.conf` is packed/restored purely as a convenience copy of whatever reference config you keep in the repo. If you run a proxy on a separate host/LXC, back up and migrate it independently.
+
+> **Stale `data/` warning.** `docker-compose.yaml` bind-mounts `./data` for Postgres, and Postgres only runs `initdb` on an empty data dir. If the target already has a non-empty `data/` from a previous install, restoring will boot that **old** cluster instead of a fresh one, and the restored `.env` credentials may not match it. `restore.sh` detects this, warns in its summary, and aborts with a clear error if it can't connect — but the fix is to move/remove `data/` on the target *before* a fresh restore.
+
 ### Creating a backup
 
 ```bash
-./backup.sh              # saves auth_backup_<timestamp>.tar.gz here
-./backup.sh /mnt/nas     # or to a specific directory
+./backup.sh                            # saves auth_backup_<timestamp>.tar.gz here
+./backup.sh /mnt/nas                   # or to a specific directory
+./backup.sh --no-db                    # config-only, no DB dump (see below)
+POSTGRES_CONTAINER=my_pg ./backup.sh   # override container name (shell env, not .env)
 ```
+
+- Requires the postgres container to be running — **fails with exit 1** if it isn't, so you never silently ship a DB-less backup by accident.
+- Pass `--no-db` to explicitly opt into a config-only archive; it's named `auth_backup_<timestamp>_nodb.tar.gz` so it can't be confused with a full backup.
+- `POSTGRES_USER`/`POSTGRES_DB` are read from the running container's own environment, not from `.env` on disk — the script no longer sources `.env` at all.
+- Archive and staged files are written with `umask 077` (owner-only, not world-readable).
 
 **What gets packed:**
 
@@ -182,8 +193,8 @@ auth_rs/
 | `keys/jwt_private.pem` | Ed25519 signing key — keep secret |
 | `keys/jwt_public.pem` | Ed25519 verification key |
 | `docker-compose.yaml` | Production compose file |
-| `nginx.conf` | Reverse proxy config |
-| `postgres.dump.sql` | Full `pg_dump` of the database |
+| `nginx.conf` | Convenience copy only — not consumed by this stack |
+| `postgres.dump.sql` | Full `pg_dump` of the database (omitted with `--no-db`) |
 
 > The archive contains the private key. Transfer only over SSH (`scp`/`rsync`). Never commit to git (gitignored by default).
 
@@ -196,18 +207,20 @@ scp auth_backup_20260704_153000.tar.gz user@new-server:~/
 # 2. Copy this repo (or at least restore.sh) to the new server
 scp restore.sh user@new-server:~/auth/
 
-# 3. Run restore — it starts Postgres, waits for healthy, loads the dump, then starts all services
+# 3. On the target: if this is a fresh install, remove any stale ./data first
+#    (see the stale data/ warning above), then run restore.
 ssh user@new-server
 ./auth/restore.sh ~/auth_backup_20260704_153000.tar.gz ~/auth/
+
+# Non-interactive (e.g. scripted deploys): -y/--yes skips the confirmation prompt
+./auth/restore.sh -y ~/auth_backup_20260704_153000.tar.gz ~/auth/
 ```
 
-The script:
-1. Extracts the archive and copies files into the target directory
-2. Starts only the `postgres` service and waits for the healthcheck to pass
-3. Drops & recreates the database, then replays `postgres.dump.sql`
-4. Starts all services (`docker compose up -d`)
-
-Existing `.env`, compose, and nginx files in the target directory are backed up as `*.bak` before being overwritten.
+- Prints a summary (files to overwrite, whether the DB will be dropped, stale-`data/` warning) and requires typing `yes` to proceed — pass `-y`/`--yes` to skip this for automation.
+- Config files present in the archive (whatever `backup.sh` packed — `.env`, compose files, `nginx.conf`, etc.) are restored; any existing file of the same name is backed up first as `<file>.bak.<timestamp>`.
+- Starts postgres with `docker compose up -d --wait`, then verifies it can connect before touching the database.
+- If a DB dump is included and a database of that name already exists, it's safety-dumped to `pre_restore_<db>_<timestamp>.sql.gz` in the target dir *before* being dropped and recreated.
+- Reverse proxy config, if any, must be migrated separately — see the note above.
 
 ---
 
