@@ -165,6 +165,52 @@ auth_rs/
 
 ---
 
+## Backup & Migration
+
+### Creating a backup
+
+```bash
+./backup.sh              # saves auth_backup_<timestamp>.tar.gz here
+./backup.sh /mnt/nas     # or to a specific directory
+```
+
+**What gets packed:**
+
+| File | Contents |
+|------|----------|
+| `.env` | All env vars including DB credentials |
+| `keys/jwt_private.pem` | Ed25519 signing key — keep secret |
+| `keys/jwt_public.pem` | Ed25519 verification key |
+| `docker-compose.yaml` | Production compose file |
+| `nginx.conf` | Reverse proxy config |
+| `postgres.dump.sql` | Full `pg_dump` of the database |
+
+> The archive contains the private key. Transfer only over SSH (`scp`/`rsync`). Never commit to git (gitignored by default).
+
+### Restoring on a new server
+
+```bash
+# 1. Copy the archive to the new server
+scp auth_backup_20260704_153000.tar.gz user@new-server:~/
+
+# 2. Copy this repo (or at least restore.sh) to the new server
+scp restore.sh user@new-server:~/auth/
+
+# 3. Run restore — it starts Postgres, waits for healthy, loads the dump, then starts all services
+ssh user@new-server
+./auth/restore.sh ~/auth_backup_20260704_153000.tar.gz ~/auth/
+```
+
+The script:
+1. Extracts the archive and copies files into the target directory
+2. Starts only the `postgres` service and waits for the healthcheck to pass
+3. Drops & recreates the database, then replays `postgres.dump.sql`
+4. Starts all services (`docker compose up -d`)
+
+Existing `.env`, compose, and nginx files in the target directory are backed up as `*.bak` before being overwritten.
+
+---
+
 ## Useful reading
 
 - [axum docs](https://docs.rs/axum) + [examples](https://github.com/tokio-rs/axum/tree/main/examples)
